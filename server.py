@@ -16,9 +16,20 @@ from pydantic import BaseModel
 # CERT_FILE = CERT_DIR / "cert.pem"
 # KEY_FILE = CERT_DIR / "key.pem"
 DB_PATH = Path("data/access.db")
+TOKEN_PATH = Path("data/admin_token")
 PORT = 8443
 
-ADMIN_TOKEN = uuid4().hex
+
+def load_or_create_token() -> str:
+    TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if TOKEN_PATH.exists():
+        return TOKEN_PATH.read_text().strip()
+    token = uuid4().hex
+    TOKEN_PATH.write_text(token)
+    return token
+
+
+ADMIN_TOKEN = load_or_create_token()
 COOKIE_NAME = "admin_session"
 
 db: aiosqlite.Connection
