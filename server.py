@@ -12,9 +12,9 @@ from fastapi import Cookie, FastAPI, HTTPException, Response
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
-CERT_DIR = Path("certs")
-CERT_FILE = CERT_DIR / "cert.pem"
-KEY_FILE = CERT_DIR / "key.pem"
+# CERT_DIR = Path("certs")
+# CERT_FILE = CERT_DIR / "cert.pem"
+# KEY_FILE = CERT_DIR / "key.pem"
 DB_PATH = Path("data/access.db")
 PORT = 8443
 
@@ -294,14 +294,14 @@ async def allow_seconds(
 
 if __name__ == "__main__":
     ip = detect_local_ip()
-    generate_self_signed_cert(ip)
+    # generate_self_signed_cert(ip)
     print(f"\n  Reader:  https://{ip}:{PORT}")
     print(f"  Admin:   https://{ip}:{PORT}/{ADMIN_TOKEN}\n")
     uvicorn.run(
         app,
         host="0.0.0.0",
         port=PORT,
-        ssl_keyfile=str(KEY_FILE),
-        ssl_certfile=str(CERT_FILE),
+        # ssl_keyfile=str(KEY_FILE),
+        # ssl_certfile=str(CERT_FILE),
         log_level="warning",
     )
