@@ -1,0 +1,10 @@
+[project]
+name = "access-control"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.12"
+dependencies = [
+    "aiosqlite>=0.20.0",
+    "fastapi>=0.129.2",
+    "uvicorn[standard]>=0.41.0",
+]

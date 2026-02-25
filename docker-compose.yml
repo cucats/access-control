@@ -1,0 +1,8 @@
+services:
+  scanner:
+    build: .
+    network_mode: host
+    volumes:
+      - ./data:/app/data
+      - ./certs:/app/certs
+    restart: unless-stopped

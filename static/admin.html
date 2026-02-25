@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin Dashboard - Event Food Access Control</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: #f5f5f5;
+    color: #333;
+    line-height: 1.5;
+    padding: 1rem;
+  }
+
+  h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+  h2 { font-size: 1.2rem; margin-bottom: 0.75rem; color: #555; }
+
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+    border-bottom: 2px solid #ddd;
+    padding-bottom: 1rem;
+  }
+
+  .header .guest-count {
+    font-size: 1rem;
+    color: #666;
+  }
+
+  .guest-count strong {
+    font-size: 1.3rem;
+    color: #222;
+  }
+
+  .auth-error {
+    display: none;
+    background: #fff3cd;
+    border: 1px solid #ffc107;
+    color: #856404;
+    padding: 1rem;
+    border-radius: 6px;
+    margin-bottom: 1.5rem;
+    text-align: center;
+    font-weight: 500;
+  }
+
+  .section {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 1.25rem;
+    margin-bottom: 1.5rem;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 0.5rem;
+  }
+
+  th, td {
+    text-align: left;
+    padding: 0.6rem 0.75rem;
+    border-bottom: 1px solid #eee;
+  }
+
+  th {
+    font-weight: 600;
+    color: #555;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    border-bottom: 2px solid #ddd;
+  }
+
+  tr.active-meal {
+    background: #e8f5e9;
+  }
+
+  td.actions {
+    white-space: nowrap;
+  }
+
+  button {
+    padding: 0.35rem 0.75rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: #fff;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: background 0.15s;
+  }
+
+  button:hover { background: #f0f0f0; }
+
+  button.btn-seconds {
+    border-color: #4caf50;
+    color: #2e7d32;
+  }
+  button.btn-seconds:hover { background: #e8f5e9; }
+
+  button.btn-delete {
+    border-color: #e53935;
+    color: #c62828;
+    margin-left: 0.35rem;
+  }
+  button.btn-delete:hover { background: #ffebee; }
+
+  button.btn-submit {
+    background: #1976d2;
+    color: #fff;
+    border-color: #1565c0;
+    padding: 0.5rem 1.25rem;
+    font-size: 0.95rem;
+  }
+  button.btn-submit:hover { background: #1565c0; }
+
+  .form-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: flex-end;
+  }
+
+  .form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .form-group label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #555;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  .form-group input {
+    padding: 0.45rem 0.6rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    font-family: inherit;
+  }
+
+  .form-group input:focus {
+    outline: none;
+    border-color: #1976d2;
+    box-shadow: 0 0 0 2px rgba(25, 118, 210, 0.15);
+  }
+
+  .empty-state {
+    text-align: center;
+    color: #999;
+    padding: 2rem 0;
+  }
+
+  @media (max-width: 700px) {
+    table { font-size: 0.85rem; }
+    th, td { padding: 0.4rem 0.5rem; }
+    .form-row { flex-direction: column; }
+    .form-group { width: 100%; }
+    .form-group input { width: 100%; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Admin Dashboard</h1>
+  <div class="guest-count">Registered guests: <strong id="guest-count">--</strong></div>
+</div>
+
+<div class="auth-error" id="auth-error">
+  You need to authenticate via the admin link to access this dashboard.
+</div>
+
+<div class="section">
+  <h2>Meals</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Start</th>
+        <th>End</th>
+        <th>Served</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="meals-body">
+      <tr><td colspan="5" class="empty-state">Loading...</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="section">
+  <h2>Create Meal</h2>
+  <form id="create-meal-form">
+    <div class="form-row">
+      <div class="form-group">
+        <label for="meal-name">Name</label>
+        <input type="text" id="meal-name" required placeholder="e.g. Lunch">
+      </div>
+      <div class="form-group">
+        <label for="meal-start">Start Time</label>
+        <input type="datetime-local" id="meal-start" required>
+      </div>
+      <div class="form-group">
+        <label for="meal-end">End Time</label>
+        <input type="datetime-local" id="meal-end" required>
+      </div>
+      <div class="form-group">
+        <label>&nbsp;</label>
+        <button type="submit" class="btn-submit">Create Meal</button>
+      </div>
+    </div>
+  </form>
+</div>
+
+<script>
+  const REFRESH_INTERVAL = 5000;
+  let refreshTimer = null;
+
+  function showAuthError() {
+    document.getElementById("auth-error").style.display = "block";
+  }
+
+  async function apiFetch(url, options = {}) {
+    options.credentials = "same-origin";
+    const res = await fetch(url, options);
+    if (res.status === 403) {
+      showAuthError();
+      return null;
+    }
+    return res;
+  }
+
+  function formatDatetime(isoString) {
+    if (!isoString) return "--";
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return isoString;
+    return d.toLocaleString(undefined, {
+      month: "short", day: "numeric",
+      hour: "2-digit", minute: "2-digit"
+    });
+  }
+
+  function isMealActive(meal) {
+    const now = new Date();
+    const start = new Date(meal.start_time);
+    const end = new Date(meal.end_time);
+    return now >= start && now <= end;
+  }
+
+  function renderMeals(meals) {
+    const tbody = document.getElementById("meals-body");
+
+    if (!meals || meals.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No meals configured.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = meals.map(function(meal) {
+      const active = isMealActive(meal);
+      return '<tr class="' + (active ? "active-meal" : "") + '">'
+        + "<td>" + escapeHtml(meal.name) + "</td>"
+        + "<td>" + formatDatetime(meal.start_time) + "</td>"
+        + "<td>" + formatDatetime(meal.end_time) + "</td>"
+        + "<td>" + (meal.served != null ? meal.served : "--") + "</td>"
+        + '<td class="actions">'
+        + '<button class="btn-seconds" onclick="allowSeconds(\'' + meal.id + '\')">Allow Seconds</button>'
+        + '<button class="btn-delete" onclick="deleteMeal(\'' + meal.id + '\')">Delete</button>'
+        + "</td></tr>";
+    }).join("");
+  }
+
+  function escapeHtml(str) {
+    if (str == null) return "";
+    var div = document.createElement("div");
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  async function loadStats() {
+    try {
+      var res = await apiFetch("/api/admin/stats");
+      if (!res) return;
+      if (!res.ok) return;
+      var data = await res.json();
+      document.getElementById("guest-count").textContent = data.total_guests != null ? data.total_guests : "--";
+      renderMeals(data.meals || []);
+    } catch (e) {
+      console.error("Failed to load stats:", e);
+    }
+  }
+
+  async function allowSeconds(mealId) {
+    try {
+      var res = await apiFetch("/api/admin/meals/" + encodeURIComponent(mealId) + "/seconds", {
+        method: "POST"
+      });
+      if (!res) return;
+      if (res.ok) {
+        loadStats();
+      } else {
+        var text = await res.text();
+        alert("Failed to allow seconds: " + text);
+      }
+    } catch (e) {
+      alert("Error: " + e.message);
+    }
+  }
+
+  async function deleteMeal(mealId) {
+    if (!confirm("Delete this meal? This cannot be undone.")) return;
+    try {
+      var res = await apiFetch("/api/admin/meals/" + encodeURIComponent(mealId), {
+        method: "DELETE"
+      });
+      if (!res) return;
+      if (res.ok) {
+        loadStats();
+      } else {
+        var text = await res.text();
+        alert("Failed to delete meal: " + text);
+      }
+    } catch (e) {
+      alert("Error: " + e.message);
+    }
+  }
+
+  document.getElementById("create-meal-form").addEventListener("submit", async function(e) {
+    e.preventDefault();
+    var name = document.getElementById("meal-name").value.trim();
+    var startTime = document.getElementById("meal-start").value;
+    var endTime = document.getElementById("meal-end").value;
+
+    if (!name || !startTime || !endTime) return;
+
+    try {
+      var res = await apiFetch("/api/admin/meals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: name,
+          start_time: startTime,
+          end_time: endTime
+        })
+      });
+      if (!res) return;
+      if (res.ok) {
+        document.getElementById("create-meal-form").reset();
+        loadStats();
+      } else if (res.status === 409) {
+        alert("Conflict: This meal overlaps with an existing meal. Please choose different times.");
+      } else {
+        var text = await res.text();
+        alert("Failed to create meal: " + text);
+      }
+    } catch (e) {
+      alert("Error: " + e.message);
+    }
+  });
+
+  loadStats();
+  refreshTimer = setInterval(loadStats, REFRESH_INTERVAL);
+</script>
+
+</body>
+</html>

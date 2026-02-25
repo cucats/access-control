@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>NFC Food Scanner</title>
+<style>
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  html, body {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  body {
+    display: flex;
+    flex-direction: column;
+    transition: background-color 0.15s ease;
+  }
+
+  body.ready { background-color: #e0e0e0; color: #333; }
+  body.ok { background-color: #2e7d32; color: #fff; }
+  body.error { background-color: #c62828; color: #fff; }
+  body.warning { background-color: #f9a825; color: #333; }
+
+  .mode-toggle {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 100;
+    display: flex;
+    padding: 12px;
+    gap: 8px;
+    background: rgba(0, 0, 0, 0.12);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+
+  .mode-toggle button {
+    flex: 1;
+    padding: 14px 8px;
+    border: 3px solid transparent;
+    border-radius: 12px;
+    font-size: clamp(0.85rem, 3vw, 1.2rem);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    background: rgba(255, 255, 255, 0.25);
+    color: rgba(0, 0, 0, 0.5);
+  }
+
+  .mode-toggle button.active {
+    background: #fff;
+    color: #000;
+    border-color: rgba(0, 0, 0, 0.15);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  }
+
+  .main-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 90px 24px 60px;
+    text-align: center;
+  }
+
+  #status-text {
+    font-size: clamp(2.5rem, 10vw, 6rem);
+    font-weight: 900;
+    line-height: 1.1;
+    margin-bottom: 12px;
+  }
+
+  #sub-text {
+    font-size: clamp(1.2rem, 5vw, 2.5rem);
+    font-weight: 600;
+    opacity: 0.7;
+    margin-bottom: 24px;
+  }
+
+  #counter {
+    position: fixed;
+    bottom: 24px;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font-size: clamp(0.9rem, 3vw, 1.3rem);
+    font-weight: 600;
+    opacity: 0.55;
+  }
+
+  #start-btn {
+    padding: 20px 48px;
+    font-size: clamp(1.1rem, 4vw, 1.5rem);
+    font-weight: 700;
+    border: none;
+    border-radius: 16px;
+    background: #1565c0;
+    color: #fff;
+    cursor: pointer;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+    transition: transform 0.1s ease, box-shadow 0.1s ease;
+  }
+
+  #start-btn:active {
+    transform: scale(0.97);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  }
+
+  .hidden { display: none !important; }
+</style>
+</head>
+<body class="ready">
+
+<div class="mode-toggle">
+  <button id="btn-registration" class="active">Registration</button>
+  <button id="btn-collection">Food Collection</button>
+</div>
+
+<div class="main-area">
+  <div id="status-text">READY</div>
+  <div id="sub-text"></div>
+  <button id="start-btn">Start Scanning</button>
+</div>
+
+<div id="counter"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  var mode = "registration";
+  var lastUid = null;
+  var lastUidTime = 0;
+  var scanning = false;
+  var displayTimeout = null;
+  var audioCtx = null;
+
+  var DEBOUNCE_MS = 3000;
+  var DISPLAY_MS = 1000;
+  var RETRY_COUNT = 3;
+  var RETRY_DELAY_MS = 500;
+
+  var statusText = document.getElementById("status-text");
+  var subText = document.getElementById("sub-text");
+  var counterEl = document.getElementById("counter");
+  var startBtn = document.getElementById("start-btn");
+  var btnRegistration = document.getElementById("btn-registration");
+  var btnCollection = document.getElementById("btn-collection");
+
+  function ensureAudio() {
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (audioCtx.state === "suspended") {
+      audioCtx.resume();
+    }
+  }
+
+  function playBeep(freq, duration, type, startTime) {
+    var osc = audioCtx.createOscillator();
+    var gain = audioCtx.createGain();
+    osc.type = type;
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0.3, startTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start(startTime);
+    osc.stop(startTime + duration);
+  }
+
+  function beepSuccess() {
+    ensureAudio();
+    var now = audioCtx.currentTime;
+    playBeep(660, 0.12, "square", now);
+    playBeep(880, 0.12, "square", now + 0.12);
+    playBeep(1100, 0.15, "square", now + 0.24);
+  }
+
+  function beepError() {
+    ensureAudio();
+    var now = audioCtx.currentTime;
+    playBeep(220, 0.4, "sawtooth", now);
+  }
+
+  function setMode(m) {
+    mode = m;
+    btnRegistration.classList.toggle("active", m === "registration");
+    btnCollection.classList.toggle("active", m === "collection");
+    resetDisplay();
+    fetchStats();
+  }
+
+  function resetDisplay() {
+    if (displayTimeout) {
+      clearTimeout(displayTimeout);
+      displayTimeout = null;
+    }
+    document.body.className = "ready";
+    statusText.textContent = "READY";
+    subText.textContent = scanning ? "Waiting for NFC tag" : "";
+    if (!scanning) {
+      startBtn.classList.remove("hidden");
+    }
+  }
+
+  function showState(cls, text, sub) {
+    if (displayTimeout) clearTimeout(displayTimeout);
+    document.body.className = cls;
+    statusText.textContent = text;
+    subText.textContent = sub || "";
+    displayTimeout = setTimeout(resetDisplay, DISPLAY_MS);
+  }
+
+  async function fetchWithRetry(url, body) {
+    var lastErr;
+    for (var i = 0; i < RETRY_COUNT; i++) {
+      try {
+        var resp = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        return await resp.json();
+      } catch (err) {
+        lastErr = err;
+        if (i < RETRY_COUNT - 1) {
+          await new Promise(function (r) { setTimeout(r, RETRY_DELAY_MS); });
+        }
+      }
+    }
+    throw lastErr;
+  }
+
+  async function fetchStats() {
+    try {
+      var resp = await fetch("/stats");
+      var data = await resp.json();
+      updateCounter(data);
+    } catch (e) {
+      /* stats fetch failure ignored */
+    }
+  }
+
+  function updateCounter(data) {
+    if (mode === "registration") {
+      var n = data.registered != null ? data.registered : 0;
+      counterEl.textContent = n + " registered";
+    } else {
+      var meal = data.active_meal;
+      counterEl.textContent = (meal && meal.name) ? meal.name : "No active meal";
+    }
+  }
+
+  async function handleTag(uid) {
+    var now = Date.now();
+    if (uid === lastUid && now - lastUidTime < DEBOUNCE_MS) return;
+    lastUid = uid;
+    lastUidTime = now;
+
+    if (mode === "registration") {
+      await handleRegistration(uid);
+    } else {
+      await handleCollection(uid);
+    }
+
+    fetchStats();
+  }
+
+  async function handleRegistration(uid) {
+    try {
+      var data = await fetchWithRetry("/register", { uid: uid });
+
+      if (data.status === "registered") {
+        beepSuccess();
+        var total = data.total_guests != null ? data.total_guests : "";
+        showState("ok", "REGISTERED", total !== "" ? total + " registered" : "");
+      } else if (data.status === "already_registered") {
+        beepError();
+        showState("error", "ALREADY REGISTERED");
+      } else {
+        beepError();
+        showState("error", "ERROR", data.status || "Unknown response");
+      }
+    } catch (e) {
+      beepError();
+      showState("error", "NETWORK ERROR", "Check connection");
+    }
+  }
+
+  async function handleCollection(uid) {
+    try {
+      var data = await fetchWithRetry("/collect", { uid: uid });
+
+      if (data.status === "ok") {
+        beepSuccess();
+        showState("ok", "FOOD OK", data.meal_name || "");
+      } else if (data.status === "already_collected") {
+        beepError();
+        showState("error", "ALREADY COLLECTED");
+      } else if (data.status === "not_registered") {
+        beepError();
+        showState("error", "NOT REGISTERED");
+      } else if (data.status === "no_active_meal") {
+        beepError();
+        showState("warning", "NO ACTIVE MEAL");
+      } else {
+        beepError();
+        showState("error", "ERROR", data.status || "Unknown response");
+      }
+    } catch (e) {
+      beepError();
+      showState("error", "NETWORK ERROR", "Check connection");
+    }
+  }
+
+  async function startScanning() {
+    if (scanning) return;
+
+    ensureAudio();
+
+    if (!("NDEFReader" in window)) {
+      showState("error", "NFC NOT SUPPORTED", "Use Chrome on Android");
+      return;
+    }
+
+    try {
+      var reader = new NDEFReader();
+      await reader.scan();
+      scanning = true;
+      startBtn.classList.add("hidden");
+      resetDisplay();
+      fetchStats();
+
+      reader.addEventListener("reading", function (event) {
+        var uid = event.serialNumber.replace(/:/g, "").toUpperCase();
+        handleTag(uid);
+      });
+
+      reader.addEventListener("readingerror", function () {
+        beepError();
+        showState("error", "READ ERROR", "Try again");
+      });
+    } catch (err) {
+      showState("error", "NFC ERROR", err.message || "Permission denied");
+    }
+  }
+
+  btnRegistration.addEventListener("click", function () { setMode("registration"); });
+  btnCollection.addEventListener("click", function () { setMode("collection"); });
+  startBtn.addEventListener("click", startScanning);
+
+  fetchStats();
+})();
+</script>
+
+</body>
+</html>
