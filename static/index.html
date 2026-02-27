@@ -154,13 +154,6 @@
   var DISPLAY_MS = 1000;
   var RETRY_COUNT = 3;
   var RETRY_DELAY_MS = 500;
-  var USB_INPUT_MAX_GAP_MS = 80;
-
-  var usbBuffer = "";
-  var usbLastKeyTime = 0;
-  var usbFlushTimer = null;
-  var hasWebNfc = "NDEFReader" in window;
-  var nfcSocket = null;
 
   var statusText = document.getElementById("status-text");
   var subText = document.getElementById("sub-text");
@@ -336,95 +329,36 @@
     }
   }
 
-  function processUsbBuffer() {
-    var raw = usbBuffer.trim();
-    usbBuffer = "";
-    if (!raw) return;
-    var uid = raw.replace(/[^0-9A-Fa-f]/g, "").toUpperCase();
-    if (uid.length >= 4 && uid.length <= 20) {
-      handleTag(uid);
-    }
-  }
-
-  function connectWebSocket() {
-    var proto = location.protocol === "https:" ? "wss:" : "ws:";
-    var ws = new WebSocket(proto + "//" + location.host + "/ws/nfc");
-
-    ws.onmessage = function (event) {
-      try {
-        var data = JSON.parse(event.data);
-        if (data.uid) handleTag(data.uid);
-      } catch (e) { /* ignore malformed messages */ }
-    };
-
-    ws.onclose = function () {
-      nfcSocket = null;
-      if (scanning) setTimeout(connectWebSocket, 2000);
-    };
-
-    ws.onerror = function () { ws.close(); };
-
-    nfcSocket = ws;
-  }
-
-  function startUsbListener() {
-    document.addEventListener("keydown", function (e) {
-      if (!scanning) return;
-
-      var now = Date.now();
-
-      if (e.key === "Enter") {
-        e.preventDefault();
-        if (usbFlushTimer) { clearTimeout(usbFlushTimer); usbFlushTimer = null; }
-        processUsbBuffer();
-        return;
-      }
-
-      if (e.key.length === 1) {
-        if (now - usbLastKeyTime > USB_INPUT_MAX_GAP_MS) {
-          usbBuffer = "";
-        }
-        usbBuffer += e.key;
-        usbLastKeyTime = now;
-
-        if (usbFlushTimer) clearTimeout(usbFlushTimer);
-        usbFlushTimer = setTimeout(processUsbBuffer, USB_INPUT_MAX_GAP_MS + 20);
-
-        e.preventDefault();
-      }
-    });
-  }
-
   async function startScanning() {
     if (scanning) return;
 
     ensureAudio();
-    startUsbListener();
-    connectWebSocket();
 
-    if (hasWebNfc) {
-      try {
-        var reader = new NDEFReader();
-        await reader.scan();
-
-        reader.addEventListener("reading", function (event) {
-          var uid = event.serialNumber.replace(/:/g, "").toUpperCase();
-          handleTag(uid);
-        });
-
-        reader.addEventListener("readingerror", function () {
-          beepError();
-          showState("error", "READ ERROR", "Try again");
-        });
-      } catch (err) {
-        /* Web NFC failed (permission denied, etc.) — continue with USB input */
-      }
+    if (!("NDEFReader" in window)) {
+      showState("error", "NFC NOT SUPPORTED", "Use Chrome on Android");
+      return;
     }
 
-    scanning = true;
-    startBtn.classList.add("hidden");
-    resetDisplay();
-    fetchStats();
+    try {
+      var reader = new NDEFReader();
+      await reader.scan();
+      scanning = true;
+      startBtn.classList.add("hidden");
+      resetDisplay();
+      fetchStats();
+
+      reader.addEventListener("reading", function (event) {
+        var uid = event.serialNumber.replace(/:/g, "").toUpperCase();
+        handleTag(uid);
+      });
+
+      reader.addEventListener("readingerror", function () {
+        beepError();
+        showState("error", "READ ERROR", "Try again");
+      });
+    } catch (err) {
+      showState("error", "NFC ERROR", err.message || "Permission denied");
+    }
   }
 
   btnRegistration.addEventListener("click", function () { setMode("registration"); });

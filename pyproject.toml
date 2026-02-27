@@ -8,6 +8,3 @@ dependencies = [
     "fastapi>=0.129.2",
     "uvicorn[standard]>=0.41.0",
 ]
-
-[project.optional-dependencies]
-nfc = ["pyscard>=2.0.0"]
