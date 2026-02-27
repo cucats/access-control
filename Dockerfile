@@ -1,6 +1,6 @@
 FROM python:3.12-slim AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpcsclite-dev swig gcc && rm -rf /var/lib/apt/lists/*
+    libpcsclite-dev swig gcc libc6-dev && rm -rf /var/lib/apt/lists/*
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 ENV PYTHONUNBUFFERED=1
 WORKDIR /app
