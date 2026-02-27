@@ -1,3 +1,4 @@
+import asyncio
 import os
 import socket
 import subprocess
@@ -8,9 +9,15 @@ from uuid import uuid4
 
 import aiosqlite
 import uvicorn
-from fastapi import Cookie, FastAPI, HTTPException, Response
+from fastapi import Cookie, FastAPI, HTTPException, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
+
+try:
+    from smartcard.CardMonitoring import CardMonitor, CardObserver
+    _PCSC = True
+except ImportError:
+    _PCSC = False
 
 # CERT_DIR = Path("certs")
 # CERT_FILE = CERT_DIR / "cert.pem"
@@ -31,8 +38,41 @@ def load_or_create_token() -> str:
 
 ADMIN_TOKEN = load_or_create_token()
 COOKIE_NAME = "admin_session"
+_GET_UID = [0xFF, 0xCA, 0x00, 0x00, 0x00]
 
 db: aiosqlite.Connection
+_ws_clients: set[WebSocket] = set()
+_event_loop: asyncio.AbstractEventLoop | None = None
+
+
+async def _broadcast_uid(uid: str) -> None:
+    dead: set[WebSocket] = set()
+    for ws in _ws_clients.copy():
+        try:
+            await ws.send_json({"uid": uid})
+        except Exception:
+            dead.add(ws)
+    _ws_clients -= dead
+
+
+if _PCSC:
+    class _TagObserver(CardObserver):
+        def update(self, observable, actions):
+            added, _ = actions
+            for card in added:
+                try:
+                    conn = card.createConnection()
+                    conn.connect()
+                    data, sw1, sw2 = conn.transmit(_GET_UID)
+                    if sw1 == 0x90 and sw2 == 0x00 and data:
+                        uid = "".join(f"{b:02X}" for b in data)
+                        if _event_loop and not _event_loop.is_closed():
+                            asyncio.run_coroutine_threadsafe(
+                                _broadcast_uid(uid), _event_loop
+                            )
+                    conn.disconnect()
+                except Exception:
+                    pass
 
 
 def detect_local_ip() -> str:
@@ -101,9 +141,30 @@ async def init_db() -> aiosqlite.Connection:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global db
+    global db, _event_loop
     db = await init_db()
+    _event_loop = asyncio.get_running_loop()
+
+    monitor = None
+    if _PCSC:
+        try:
+            monitor = CardMonitor()
+            observer = _TagObserver()
+            monitor.addObserver(observer)
+            print("  USB NFC: reader monitoring active")
+        except Exception as e:
+            print(f"  USB NFC: unavailable ({e})")
+    else:
+        print("  USB NFC: pyscard not installed (uv sync --extra nfc)")
+
     yield
+
+    if monitor:
+        try:
+            monitor.deleteObserver(observer)
+        except Exception:
+            pass
+    _event_loop = None
     await db.close()
 
 
@@ -141,6 +202,21 @@ async def stats():
         "registered": registered,
         "active_meal": {"id": meal["id"], "name": meal["name"]} if meal else None,
     }
+
+
+# --- WebSocket (USB NFC push) ---
+
+@app.websocket("/ws/nfc")
+async def ws_nfc(ws: WebSocket):
+    await ws.accept()
+    _ws_clients.add(ws)
+    try:
+        while True:
+            await ws.receive_text()
+    except Exception:
+        pass
+    finally:
+        _ws_clients.discard(ws)
 
 
 # --- Reader ---

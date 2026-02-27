@@ -160,6 +160,7 @@
   var usbLastKeyTime = 0;
   var usbFlushTimer = null;
   var hasWebNfc = "NDEFReader" in window;
+  var nfcSocket = null;
 
   var statusText = document.getElementById("status-text");
   var subText = document.getElementById("sub-text");
@@ -219,7 +220,7 @@
     }
     document.body.className = "ready";
     statusText.textContent = "READY";
-    subText.textContent = scanning ? (hasWebNfc ? "Waiting for NFC tag" : "Scan a tag with USB reader") : "";
+    subText.textContent = scanning ? "Waiting for NFC tag" : "";
     if (!scanning) {
       startBtn.classList.remove("hidden");
     }
@@ -345,6 +346,27 @@
     }
   }
 
+  function connectWebSocket() {
+    var proto = location.protocol === "https:" ? "wss:" : "ws:";
+    var ws = new WebSocket(proto + "//" + location.host + "/ws/nfc");
+
+    ws.onmessage = function (event) {
+      try {
+        var data = JSON.parse(event.data);
+        if (data.uid) handleTag(data.uid);
+      } catch (e) { /* ignore malformed messages */ }
+    };
+
+    ws.onclose = function () {
+      nfcSocket = null;
+      if (scanning) setTimeout(connectWebSocket, 2000);
+    };
+
+    ws.onerror = function () { ws.close(); };
+
+    nfcSocket = ws;
+  }
+
   function startUsbListener() {
     document.addEventListener("keydown", function (e) {
       if (!scanning) return;
@@ -378,6 +400,7 @@
 
     ensureAudio();
     startUsbListener();
+    connectWebSocket();
 
     if (hasWebNfc) {
       try {

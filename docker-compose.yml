@@ -5,4 +5,5 @@ services:
     volumes:
       - ./data:/app/data
       - ./certs:/app/certs
+      - /var/run/pcscd:/var/run/pcscd
     restart: unless-stopped
