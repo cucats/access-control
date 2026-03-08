@@ -94,6 +94,11 @@ async def init_db() -> aiosqlite.Connection:
             UNIQUE(meal_id, uid)
         );
     """)
+    # Migration: add card_uid column for physical card UID cross-reference
+    try:
+        await conn.execute("ALTER TABLE guests ADD COLUMN card_uid TEXT")
+    except Exception:
+        pass  # column already exists
     await conn.commit()
     conn.row_factory = aiosqlite.Row
     return conn
@@ -145,18 +150,23 @@ async def stats():
 
 # --- Reader ---
 
-class UidRequest(BaseModel):
+class ScanRequest(BaseModel):
     uid: str
+    card_uid: str | None = None
 
 
 @app.post("/register")
-async def register(req: UidRequest):
+async def register(req: ScanRequest):
     uid = req.uid.strip().upper()
     if not uid:
         return JSONResponse({"error": "empty uid"}, status_code=400)
+    card_uid = req.card_uid.strip().upper() if req.card_uid else uid
 
     try:
-        await db.execute("INSERT INTO guests (uid) VALUES (?)", (uid,))
+        await db.execute(
+            "INSERT INTO guests (uid, card_uid) VALUES (?, ?)",
+            (uid, card_uid),
+        )
         await db.commit()
         cursor = await db.execute("SELECT COUNT(*) FROM guests")
         (total,) = await cursor.fetchone()
@@ -168,15 +178,21 @@ async def register(req: UidRequest):
 
 
 @app.post("/collect")
-async def collect(req: UidRequest):
+async def collect(req: ScanRequest):
     uid = req.uid.strip().upper()
     if not uid:
         return JSONResponse({"error": "empty uid"}, status_code=400)
+    card_uid = req.card_uid.strip().upper() if req.card_uid else uid
 
-    cursor = await db.execute("SELECT uid FROM guests WHERE uid = ?", (uid,))
-    if not await cursor.fetchone():
+    cursor = await db.execute(
+        "SELECT uid FROM guests WHERE uid = ? OR card_uid = ? LIMIT 1",
+        (uid, card_uid),
+    )
+    guest = await cursor.fetchone()
+    if not guest:
         return {"status": "not_registered"}
 
+    guest_uid = guest["uid"]
     meal = await get_active_meal()
     if not meal:
         return {"status": "no_active_meal"}
@@ -184,7 +200,7 @@ async def collect(req: UidRequest):
     try:
         await db.execute(
             "INSERT INTO collections (meal_id, uid) VALUES (?, ?)",
-            (meal["id"], uid),
+            (meal["id"], guest_uid),
         )
         await db.commit()
         return {"status": "ok", "meal_name": meal["name"]}

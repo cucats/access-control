@@ -121,6 +121,38 @@
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
   }
 
+  #camcard-buttons {
+    display: flex;
+    gap: 16px;
+    margin-top: 24px;
+  }
+
+  .camcard-btn {
+    padding: 20px 40px;
+    font-size: clamp(1.1rem, 4vw, 1.5rem);
+    font-weight: 700;
+    border: none;
+    border-radius: 16px;
+    cursor: pointer;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+    transition: transform 0.1s ease, box-shadow 0.1s ease;
+  }
+
+  .camcard-btn:active {
+    transform: scale(0.97);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  }
+
+  .camcard-btn.allow {
+    background: #2e7d32;
+    color: #fff;
+  }
+
+  .camcard-btn.block {
+    background: #c62828;
+    color: #fff;
+  }
+
   .hidden { display: none !important; }
 </style>
 </head>
@@ -135,6 +167,10 @@
   <div id="status-text">READY</div>
   <div id="sub-text"></div>
   <button id="start-btn">Start Scanning</button>
+  <div id="camcard-buttons" class="hidden">
+    <button id="btn-allow" class="camcard-btn allow">Allow Anyway</button>
+    <button id="btn-block" class="camcard-btn block">Block</button>
+  </div>
 </div>
 
 <div id="counter"></div>
@@ -149,6 +185,8 @@
   var scanning = false;
   var displayTimeout = null;
   var audioCtx = null;
+  var pendingCard = null;
+  var paused = false;
 
   var DEBOUNCE_MS = 3000;
   var DISPLAY_MS = 1000;
@@ -161,6 +199,9 @@
   var startBtn = document.getElementById("start-btn");
   var btnRegistration = document.getElementById("btn-registration");
   var btnCollection = document.getElementById("btn-collection");
+  var camcardButtons = document.getElementById("camcard-buttons");
+  var btnAllow = document.getElementById("btn-allow");
+  var btnBlock = document.getElementById("btn-block");
 
   function ensureAudio() {
     if (!audioCtx) {
@@ -200,6 +241,8 @@
 
   function setMode(m) {
     mode = m;
+    pendingCard = null;
+    paused = false;
     btnRegistration.classList.toggle("active", m === "registration");
     btnCollection.classList.toggle("active", m === "collection");
     resetDisplay();
@@ -213,9 +256,12 @@
     }
     document.body.className = "ready";
     statusText.textContent = "READY";
-    subText.textContent = scanning ? "Waiting for NFC tag" : "";
+    subText.textContent = scanning ? "Waiting for card" : "";
+    camcardButtons.classList.add("hidden");
     if (!scanning) {
       startBtn.classList.remove("hidden");
+    } else {
+      startBtn.classList.add("hidden");
     }
   }
 
@@ -224,7 +270,18 @@
     document.body.className = cls;
     statusText.textContent = text;
     subText.textContent = sub || "";
+    camcardButtons.classList.add("hidden");
     displayTimeout = setTimeout(resetDisplay, DISPLAY_MS);
+  }
+
+  function showInvalidCamcard() {
+    if (displayTimeout) clearTimeout(displayTimeout);
+    document.body.className = "warning";
+    statusText.textContent = "NOT A VALID CAMCARD";
+    subText.textContent = pendingCard ? "UID: " + pendingCard.uid : "";
+    camcardButtons.classList.remove("hidden");
+    startBtn.classList.add("hidden");
+    beepError();
   }
 
   async function fetchWithRetry(url, body) {
@@ -267,6 +324,31 @@
     }
   }
 
+  // --- Card handling ---
+
+  function handleCardEvent(data) {
+    if (paused) return;
+
+    var now = Date.now();
+    if (data.uid === lastUid && now - lastUidTime < DEBOUNCE_MS) return;
+    lastUid = data.uid;
+    lastUidTime = now;
+
+    if (mode === "registration") {
+      if (data.crsid) {
+        handleRegistration(data.crsid, data.uid);
+      } else {
+        paused = true;
+        pendingCard = data;
+        showInvalidCamcard();
+      }
+    } else {
+      handleCollection(data.crsid || data.uid, data.uid);
+    }
+
+    fetchStats();
+  }
+
   async function handleTag(uid) {
     var now = Date.now();
     if (uid === lastUid && now - lastUidTime < DEBOUNCE_MS) return;
@@ -274,25 +356,29 @@
     lastUidTime = now;
 
     if (mode === "registration") {
-      await handleRegistration(uid);
+      await handleRegistration(uid, null);
     } else {
-      await handleCollection(uid);
+      await handleCollection(uid, null);
     }
 
     fetchStats();
   }
 
-  async function handleRegistration(uid) {
+  async function handleRegistration(uid, cardUid) {
     try {
-      var data = await fetchWithRetry("/register", { uid: uid });
+      var body = { uid: uid };
+      if (cardUid) body.card_uid = cardUid;
+      var data = await fetchWithRetry("/register", body);
 
       if (data.status === "registered") {
         beepSuccess();
         var total = data.total_guests != null ? data.total_guests : "";
-        showState("ok", "REGISTERED", total !== "" ? total + " registered" : "");
+        var sub = uid;
+        if (total !== "") sub += " \u00b7 " + total + " registered";
+        showState("ok", "REGISTERED", sub);
       } else if (data.status === "already_registered") {
         beepError();
-        showState("error", "ALREADY REGISTERED");
+        showState("error", "ALREADY REGISTERED", uid);
       } else {
         beepError();
         showState("error", "ERROR", data.status || "Unknown response");
@@ -303,9 +389,11 @@
     }
   }
 
-  async function handleCollection(uid) {
+  async function handleCollection(uid, cardUid) {
     try {
-      var data = await fetchWithRetry("/collect", { uid: uid });
+      var body = { uid: uid };
+      if (cardUid) body.card_uid = cardUid;
+      var data = await fetchWithRetry("/collect", body);
 
       if (data.status === "ok") {
         beepSuccess();
@@ -328,6 +416,27 @@
       showState("error", "NETWORK ERROR", "Check connection");
     }
   }
+
+  // --- Allow / Block buttons ---
+
+  btnAllow.addEventListener("click", function () {
+    if (!pendingCard) return;
+    var card = pendingCard;
+    pendingCard = null;
+    paused = false;
+    camcardButtons.classList.add("hidden");
+    handleRegistration(card.uid, card.uid);
+    fetchStats();
+  });
+
+  btnBlock.addEventListener("click", function () {
+    pendingCard = null;
+    paused = false;
+    camcardButtons.classList.add("hidden");
+    resetDisplay();
+  });
+
+  // --- Web NFC ---
 
   async function startScanning() {
     if (scanning) return;
@@ -360,6 +469,8 @@
       showState("error", "NFC ERROR", err.message || "Permission denied");
     }
   }
+
+  // --- Init ---
 
   btnRegistration.addEventListener("click", function () { setMode("registration"); });
   btnCollection.addEventListener("click", function () { setMode("collection"); });
